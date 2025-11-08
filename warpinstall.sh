@@ -16,6 +16,23 @@ exec 3>&1 4>&2
 # Redirigimos toda la salida normal y de error al log (silencioso para el usuario)
 exec 1>>"$LOG_FILE" 2>&1
 
+# --- Helpers de interaccion (prompts visibles) ---
+prompt_enter() {
+  echo -e "\n[INFO] $1" >&3
+  echo -n "Presiona Enter para continuar... " >&3
+  if [ -t 0 ]; then read -r _ </dev/tty 2>/dev/null || read -r _; else read -r _; fi
+}
+
+prompt_yes_no() {
+  echo -n "$1 (s/n): " >&3
+  local ans=""
+  if [ -t 0 ]; then read -r ans </dev/tty 2>/dev/null || read -r ans; else read -r ans; fi
+  case "$ans" in
+    s|S|si|SI) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # --- Mensajería para el usuario (solo SUCCESS/ERROR) ---
 ui_success() { echo "SUCCESS: $1" >&3; }
 ui_error() {
@@ -100,9 +117,29 @@ if [ "$EUID" -ne 0 ]; then
   fi
 fi
 
+if [ -z "$WARP_KEY" ] && [ "$DRY_RUN" -ne 1 ]; then
+  if prompt_yes_no "Quieres usar WARP+ (licencia)?" ; then
+    echo -n "Introduce tu clave WARP+ (visible al escribir): " >&3
+    if [ -t 0 ]; then read -r WARP_KEY </dev/tty 2>/dev/null || read -r WARP_KEY; else read -r WARP_KEY; fi
+    if [ -z "$WARP_KEY" ]; then
+      echo "[info] No se introdujo clave WARP+; se continuara en modo gratuito." >>"$LOG_FILE"
+    else
+      echo "[info] Clave WARP+ recibida (no se mostrara en pantalla)." >>"$LOG_FILE"
+    fi
+  fi
+fi
+
 # --- Definir función de fallo seguro ---
 safe_exit_on_error() {
   ui_error "$1"
+}
+
+cleanup_ssh_routes() {
+  if [ -f "/tmp/warp-ssh-routes" ]; then
+    while read -r p; do
+      ip route del ${p}/32 >/dev/null 2>&1 || true
+    done < /tmp/warp-ssh-routes
+  fi
 }
 
 # --- Preparar rollback seguro para evitar perder SSH ---
@@ -145,6 +182,7 @@ else
 fi
 
 # --- Instalar dependencias ---
+prompt_enter "Se instalaran dependencias base y se configurara el repositorio de Cloudflare WARP."
 apt-get update -y || safe_exit_on_error "Error al actualizar repositorios."
 apt-get install -y curl gnupg lsb-release wget apt-transport-https ca-certificates iproute2 net-tools systemd || safe_exit_on_error "Error al instalar dependencias."
 
@@ -158,6 +196,7 @@ echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyr
 apt-get update -y || safe_exit_on_error "Error al actualizar repositorios luego de añadir repo de Cloudflare."
 
 # --- Instalar paquete cloudflare-warp ---
+prompt_enter "Se instalara el paquete cloudflare-warp desde el repositorio oficial."
 if ! apt-get install -y cloudflare-warp; then
   # Intentar instalación manual conservadora
   cd /tmp || safe_exit_on_error "No se puede acceder a /tmp."
@@ -174,17 +213,29 @@ if ! apt-get install -y cloudflare-warp; then
 fi
 
 # --- Habilitar servicio ---
+prompt_enter "Se habilitara y arrancara el servicio warp-svc."
 systemctl enable --now warp-svc || safe_exit_on_error "No se pudo habilitar/arrancar warp-svc."
+sleep 2
+if ! systemctl is-active --quiet warp-svc; then
+  systemctl restart warp-svc >/dev/null 2>&1 || true
+  sleep 2
+fi
+systemctl is-active --quiet warp-svc || safe_exit_on_error "warp-svc no quedo activo tras la instalacion."
 
 # --- Registrar / aplicar licencia (si se provee) ---
+prompt_enter "Se registrara warp-cli y se aplicara la licencia si corresponde."
 warp-cli registration new >/dev/null 2>&1 || echo "[info] warp-cli registration new returned non-zero (posible ya registrado)" >>"$LOG_FILE"
 if [ -n "$WARP_KEY" ]; then
   warp-cli registration license "$WARP_KEY" >/dev/null 2>&1 || echo "[warn] No se pudo aplicar la clave WARP+" >>"$LOG_FILE"
 fi
 
 # --- Configurar modo DNS-only (DoH) y conectar ---
+prompt_enter "Se configurara warp-cli en modo DNS-only (DoH)."
 warp-cli disconnect >/dev/null 2>&1 || true
-warp-cli mode doh >/dev/null 2>&1 || safe_exit_on_error "Error al establecer modo DoH."
+if ! warp-cli mode doh >/dev/null 2>&1; then
+  sleep 2
+  warp-cli mode doh >/dev/null 2>&1 || safe_exit_on_error "Error al establecer modo DoH."
+fi
 
 # --- Proteger sesiones SSH existentes: crear rutas específicas hacia los peers SSH
 # Capturar gateway y device actuales para la ruta por defecto
@@ -211,22 +262,39 @@ if [ -n "$DEFAULT_GW" ] && [ -n "$DEFAULT_DEV" ]; then
 fi
 
 # Conectar
-warp-cli connect >/dev/null 2>&1 || safe_exit_on_error "Error al conectar en modo DoH."
+prompt_enter "Se conectara WARP en modo DoH y se verificara el estado."
+if ! warp-cli connect >/dev/null 2>&1; then
+  sleep 2
+  warp-cli connect >/dev/null 2>&1 || echo "[warn] Segundo intento de connect fallo" >>"$LOG_FILE"
+fi
 
-# Verificar que warp quedó en modo doh
 WARP_STATUS=$(warp-cli status 2>/dev/null || true)
+WARP_SETTINGS=$(warp-cli settings 2>/dev/null || true)
 echo "$WARP_STATUS" >>"$LOG_FILE"
-echo "$WARP_STATUS" | grep -qi "mode.*doh" || (
-  # No quedó en modo doh: intentar rollback inmediato
-  echo "[error] warp-cli no quedó en modo doh, realizando rollback" >>"$LOG_FILE"
+echo "$WARP_SETTINGS" >>"$LOG_FILE"
+
+if ! echo "$WARP_STATUS$WARP_SETTINGS" | grep -qi "mode.*doh"; then
+  echo "[warn] No se confirmo modo DoH en el primer intento. Reintentando configuracion completa." >>"$LOG_FILE"
   warp-cli disconnect >/dev/null 2>&1 || true
-  # eliminar rutas añadidas
-  if [ -f "/tmp/warp-ssh-routes" ]; then
-    while read -r p; do ip route del ${p}/32 >/dev/null 2>&1 || true; done < /tmp/warp-ssh-routes
-  fi
+  cleanup_ssh_routes
+  sleep 1
+  warp-cli mode doh >/dev/null 2>&1 || safe_exit_on_error "Error al establecer modo DoH (reintento)."
+  sleep 1
+  warp-cli connect >/dev/null 2>&1 || true
+  sleep 1
+  WARP_STATUS=$(warp-cli status 2>/dev/null || true)
+  WARP_SETTINGS=$(warp-cli settings 2>/dev/null || true)
+  echo "$WARP_STATUS" >>"$LOG_FILE"
+  echo "$WARP_SETTINGS" >>"$LOG_FILE"
+fi
+
+if ! echo "$WARP_STATUS$WARP_SETTINGS" | grep -qi "mode.*doh"; then
+  echo "[error] warp-cli no quedo en modo DoH tras los reintentos." >>"$LOG_FILE"
+  warp-cli disconnect >/dev/null 2>&1 || true
+  cleanup_ssh_routes
   systemctl restart sshd >/dev/null 2>&1 || true
-  safe_exit_on_error "warp no quedó en modo DoH (rollback realizado). Revisa $LOG_FILE"
-)
+  safe_exit_on_error "WARP no quedo en modo DoH. Revisa $LOG_FILE"
+fi
 
 # --- Verificar salud del servicio y conectividad SSH local ---
 sleep 3
@@ -236,54 +304,32 @@ if ss -tn state established | grep -q ":${SSH_PORT}"; then
   # Señalamos al rollback que todo salió bien
   touch /tmp/warp-rollback-ok
 
-  # Si se pidió instalar el servicio, crear unidad y archivo de entorno
   if [ "$INSTALL_SERVICE" -eq 1 ]; then
-    INSTALL_PATH="/usr/local/bin/warpinstall.sh"
-    UNIT_PATH="/etc/systemd/system/warpinstall.service"
-    ENV_PATH="/etc/default/warpinstall"
-
-    # Copiar el script actual al path de instalación
-    cp "$0" "$INSTALL_PATH" >/dev/null 2>&1 || echo "[warn] No se pudo copiar $0 a $INSTALL_PATH" >>"$LOG_FILE"
-    chmod +x "$INSTALL_PATH" || true
-
-    # Construir WARP_ARGS para el EnvironmentFile
-    WARP_ARGS=""
-    if [ -n "$WARP_KEY" ]; then
-      # Escapar comillas simples en la clave
-      SAFE_KEY=$(printf "%s" "$WARP_KEY" | sed "s/'/'\\''/g")
-      WARP_ARGS="$WARP_ARGS --warp-key '$SAFE_KEY'"
+    HELPER_PATH=""
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if [ -f "$SCRIPT_DIR/install_service.sh" ]; then
+      HELPER_PATH="$SCRIPT_DIR/install_service.sh"
+    elif [ -f "/usr/local/share/warp/install_service.sh" ]; then
+      HELPER_PATH="/usr/local/share/warp/install_service.sh"
     fi
-    WARP_ARGS="$WARP_ARGS --ssh-port $SSH_PORT"
 
-    # Escribir archivo de entorno (solo si se puede)
-    printf "WARP_ARGS=%s\n" "$WARP_ARGS" > "$ENV_PATH" 2>/dev/null || echo "[warn] No se pudo escribir $ENV_PATH" >>"$LOG_FILE"
-    chmod 600 "$ENV_PATH" 2>/dev/null || true
-
-    # Escribir unidad systemd (usar EnvironmentFile)
-    cat > "$UNIT_PATH" <<'UNIT_EOF'
-[Unit]
-Description=Cloudflare WARP Installer (one-shot)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-EnvironmentFile=-/etc/default/warpinstall
-ExecStart=/usr/local/bin/warpinstall.sh ${WARP_ARGS}
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-UNIT_EOF
-
-    # Recargar systemd y habilitar la unidad (no arrancar) a menos que se pida --enable-service
-    systemctl daemon-reload >/dev/null 2>&1 || echo "[warn] systemctl daemon-reload falló" >>"$LOG_FILE"
-    systemctl enable warpinstall.service >/dev/null 2>&1 || echo "[warn] systemctl enable falló" >>"$LOG_FILE"
-
-    if [ "$ENABLE_SERVICE" -eq 1 ]; then
-      systemctl restart warpinstall.service >/dev/null 2>&1 || echo "[warn] systemctl restart falló" >>"$LOG_FILE"
+    if [ -n "$HELPER_PATH" ]; then
+      # shellcheck source=/dev/null
+      . "$HELPER_PATH"
+      if declare -F install_warp_service >/dev/null 2>&1; then
+        install_warp_service "$0" "$WARP_KEY" "$SSH_PORT" "$ENABLE_SERVICE"
+      else
+        CMD=(bash "$HELPER_PATH" --source "$0" --ssh-port "$SSH_PORT")
+        if [ -n "$WARP_KEY" ]; then
+          CMD+=(--warp-key "$WARP_KEY")
+        fi
+        if [ "$ENABLE_SERVICE" -eq 1 ]; then
+          CMD+=(--enable-service)
+        fi
+        "${CMD[@]}"
+      fi
+    else
+      echo "[warn] No se encontro install_service.sh; omitiendo la creacion del servicio." >>"$LOG_FILE"
     fi
   fi
 
