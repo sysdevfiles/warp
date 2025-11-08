@@ -1,13 +1,13 @@
-﻿#!/bin/bash
+#!/bin/bash
 # ===========================================================
 # Cloudflare WARP Secure Installer (warpinstall.sh)
 # -----------------------------------------------------------
 # Compatible con: Ubuntu 22.04 / 24.04 LTS
-# Propósito:
+# Prop?sito:
 #   - Instalar Cloudflare WARP en modo DNS-only (DoH) de forma
-#     automática y segura para no perder acceso SSH.
-#   - Modo silencioso hacia el usuario: sólo imprime SUCCESS/ERROR
-#   - Manejo automático de errores y rollback si se pierde SSH
+#     autom?tica y segura para no perder acceso SSH.
+#   - Modo silencioso hacia el usuario: s?lo imprime SUCCESS/ERROR
+#   - Manejo autom?tico de errores y rollback si se pierde SSH
 # ===========================================================
 
 LOG_FILE="/var/log/warpinstall.log"
@@ -33,7 +33,7 @@ prompt_yes_no() {
   esac
 }
 
-# --- Mensajería para el usuario (solo SUCCESS/ERROR) ---
+# --- Mensajer?a para el usuario (solo SUCCESS/ERROR) ---
 ui_success() { echo "SUCCESS: $1" >&3; }
 ui_error() {
   echo "ERROR: $1" >&3
@@ -41,7 +41,7 @@ ui_error() {
   exit 1
 }
 
-# --- Parámetros (no interactivo por defecto) ---
+# --- Par?metros (no interactivo por defecto) ---
 CLEAN_REPO_PATH=""
 WARP_KEY=""
 NONINTERACTIVE=1
@@ -53,13 +53,13 @@ ENABLE_SERVICE=0
 usage() {
   cat >&3 <<EOF
 Usage: sudo bash $(basename "$0") [options]
-Instala Cloudflare WARP en modo DNS-only (DoH) de forma automática.
+Instala Cloudflare WARP en modo DNS-only (DoH) de forma autom?tica.
 Opciones:
   --warp-key, -k   Clave WARP+ (opcional)
   --ssh-port, -p   Puerto SSH a comprobar (por defecto: 22)
-  --dry-run        Simula la instalación sin aplicar cambios (solo log)
+  --dry-run        Simula la instalaci?n sin aplicar cambios (solo log)
   --install-service, -s  Generar e instalar unidad systemd y archivo de entorno
-  --enable-service       Habilitar y arrancar la unidad systemd después de crearla
+  --enable-service       Habilitar y arrancar la unidad systemd despu?s de crearla
   --help, -h       Mostrar esta ayuda
 EOF
 }
@@ -102,7 +102,7 @@ done
 
 # Si dry-run; no necesitamos ser root ni hacer cambios
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "Dry-run: se registrarán las acciones en $LOG_FILE (no se aplicarán cambios)." >&3
+  echo "Dry-run: se registrar?n las acciones en $LOG_FILE (no se aplicar?n cambios)." >&3
   echo "[dry-run] SSH_PORT=$SSH_PORT WARP_KEY=${WARP_KEY:-<none>}" >>"$LOG_FILE"
   echo "[dry-run] Verificando ambiente (sin cambios)" >>"$LOG_FILE"
   if ! command -v ss >/dev/null 2>&1; then
@@ -118,7 +118,7 @@ if [ "$EUID" -ne 0 ]; then
   if command -v sudo >/dev/null 2>&1; then
     exec sudo -E bash "$0" --warp-key "$WARP_KEY"
   else
-    ui_error "Este script requiere privilegios de root y sudo no está disponible."
+    ui_error "Este script requiere privilegios de root y sudo no est? disponible."
   fi
 fi
 
@@ -141,7 +141,7 @@ if [ -z "$CLEAN_REPO_PATH" ] && [ "$DRY_RUN" -ne 1 ]; then
   fi
 fi
 
-# --- Definir función de fallo seguro ---
+# --- Definir funci?n de fallo seguro ---
 safe_exit_on_error() {
   ui_error "$1"
 }
@@ -156,7 +156,7 @@ cleanup_ssh_routes() {
 
 warp_cli() {
   if ! command -v warp-cli >/dev/null 2>&1; then
-    echo "[error] warp-cli no está instalado o no está en PATH" >>"$LOG_FILE"
+    echo "[error] warp-cli no est? instalado o no est? en PATH" >>"$LOG_FILE"
     return 1
   fi
   warp-cli --accept-tos "$@"
@@ -179,7 +179,7 @@ set_mode_doh() {
 }
 
 # --- Preparar rollback seguro para evitar perder SSH ---
-# Escribimos un script de rollback que se ejecutará en background via systemd-run o nohup.
+# Escribimos un script de rollback que se ejecutar? en background via systemd-run o nohup.
 ROLLBACK_SCRIPT="/usr/local/bin/warp-rollback.sh"
 cat > "$ROLLBACK_SCRIPT" <<'RB'
 #!/bin/bash
@@ -196,7 +196,7 @@ if [ -f "$PORT_FILE" ]; then
 fi
 # Comprobar si hay conexiones SSH establecidas en el puerto configurado
 if ss -tn state established | grep -q ":${SSH_PORT}"; then
-  # Hay al menos una conexión, no hacemos nada
+  # Hay al menos una conexi?n, no hacemos nada
   exit 0
 fi
 echo "[rollback] No hay conexiones SSH establecidas en puerto ${SSH_PORT}, revirtiendo WARP..." >>"$LOG"
@@ -209,7 +209,7 @@ chmod +x "$ROLLBACK_SCRIPT"
 # Guardar puerto SSH para que el script de rollback lo use
 echo "$SSH_PORT" > /tmp/warp-ssh-port
 
-# Programar la ejecución del rollback en ~60s de forma desvinculada
+# Programar la ejecuci?n del rollback en ~60s de forma desvinculada
 if command -v systemd-run >/dev/null 2>&1; then
   systemd-run --unit=warp-rollback --on-active=1m "$ROLLBACK_SCRIPT" >/dev/null 2>&1 || \
     nohup bash -c "sleep 60; $ROLLBACK_SCRIPT" >/dev/null 2>&1 &
@@ -240,7 +240,7 @@ if [ -n "$CLEAN_REPO_PATH" ]; then
   fi
 fi
 
-# --- Añadir repositorio y clave GPG ---
+# --- A?adir repositorio y clave GPG ---
 KEYRING_PATH="/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg"
 TMP_KEY=$(mktemp)
 if ! curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --dearmor -o "$TMP_KEY"; then
@@ -256,26 +256,26 @@ if ! install -m 644 "$TMP_KEY" "$KEYRING_PATH" >/dev/null 2>&1; then
 fi
 rm -f "$TMP_KEY"
 
-# Detectar codename de la distro y usarlo si está disponible, por seguridad.
+# Detectar codename de la distro y usarlo si est? disponible, por seguridad.
 DIST_CODENAME=$(lsb_release -cs 2>/dev/null || echo "jammy")
 echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $DIST_CODENAME main" > /etc/apt/sources.list.d/cloudflare-client.list
 
-apt-get update -y || safe_exit_on_error "Error al actualizar repositorios luego de añadir repo de Cloudflare."
+apt-get update -y || safe_exit_on_error "Error al actualizar repositorios luego de a?adir repo de Cloudflare."
 
 # --- Instalar paquete cloudflare-warp ---
 prompt_enter "Se instalara el paquete cloudflare-warp desde el repositorio oficial."
 if ! apt-get install -y cloudflare-warp; then
-  # Intentar instalación manual conservadora
+  # Intentar instalaci?n manual conservadora
   cd /tmp || safe_exit_on_error "No se puede acceder a /tmp."
   DEB_URL="https://pkg.cloudflareclient.com/pool/$DIST_CODENAME/main/c/cloudflare-warp/"
-  # Intentar descargar el paquete más reciente disponible por nombre conocido (fallback hardcode)
+  # Intentar descargar el paquete m?s reciente disponible por nombre conocido (fallback hardcode)
   if ! wget -q --spider "${DEB_URL}"; then
-    # Fallback a versión conocida
+    # Fallback a versi?n conocida
     wget -q https://pkg.cloudflareclient.com/pool/jammy/main/c/cloudflare-warp/cloudflare-warp_2024.8.209-1_amd64.deb || safe_exit_on_error "No se pudo descargar el paquete .deb de Cloudflare WARP."
     apt-get install -y ./cloudflare-warp_2024.8.209-1_amd64.deb || safe_exit_on_error "Error al instalar el paquete manualmente."
   else
-    # Si la URL base responde, intentar instalar desde repositorio falló por otra razón
-    safe_exit_on_error "No se pudo instalar cloudflare-warp desde apt. Revisa $LOG_FILE para más detalles."
+    # Si la URL base responde, intentar instalar desde repositorio fall? por otra raz?n
+    safe_exit_on_error "No se pudo instalar cloudflare-warp desde apt. Revisa $LOG_FILE para m?s detalles."
   fi
 fi
 
@@ -308,7 +308,7 @@ if ! set_mode_doh; then
   set_mode_doh || safe_exit_on_error "Error al establecer modo DoH."
 fi
 
-# --- Proteger sesiones SSH existentes: crear rutas específicas hacia los peers SSH
+# --- Proteger sesiones SSH existentes: crear rutas espec?ficas hacia los peers SSH
 # Capturar gateway y device actuales para la ruta por defecto
 DEFAULT_GW_LINE=$(ip route | awk '/default/ {print $0; exit}')
 DEFAULT_GW=$(echo "$DEFAULT_GW_LINE" | awk '{for(i=1;i<=NF;i++) if($i=="via") print $(i+1)}')
@@ -323,7 +323,7 @@ if [ -n "$DEFAULT_GW" ] && [ -n "$DEFAULT_DEV" ]; then
     : > "$SSH_ROUTES_FILE"
     : > "$PERSIST_ROUTES"
     while read -r peer; do
-      # Añadir ruta host hacia el peer por la gateway original
+      # A?adir ruta host hacia el peer por la gateway original
       ip route replace ${peer}/32 via $DEFAULT_GW dev $DEFAULT_DEV >/dev/null 2>&1 || true
       echo "${peer}" >> "$SSH_ROUTES_FILE"
       echo "${peer}" >> "$PERSIST_ROUTES"
@@ -370,9 +370,9 @@ fi
 # --- Verificar salud del servicio y conectividad SSH local ---
 sleep 3
 
-# Si tras la conexión aún hay al menos una sesión SSH establecida, consideramos OK.
+# Si tras la conexi?n a?n hay al menos una sesi?n SSH establecida, consideramos OK.
 if ss -tn state established | grep -q ":${SSH_PORT}"; then
-  # Señalamos al rollback que todo salió bien
+  # Se?alamos al rollback que todo sali? bien
   touch /tmp/warp-rollback-ok
 
   if [ "$INSTALL_SERVICE" -eq 1 ]; then
@@ -404,13 +404,13 @@ if ss -tn state established | grep -q ":${SSH_PORT}"; then
     fi
   fi
 
-  ui_success "Instalación completada y SSH sigue disponible."
+  ui_success "Instalaci?n completada y SSH sigue disponible."
   exit 0
 else
-  # No hay sesiones establecidas -> posible pérdida de conexión remota
+  # No hay sesiones establecidas -> posible p?rdida de conexi?n remota
   # Intentar desconectar WARP inmediatamente para recuperar conectividad
   warp-cli disconnect >/dev/null 2>&1 || true
   systemctl restart sshd >/dev/null 2>&1 || true
-  ui_error "Instalación aplicada pero no se detectan sesiones SSH establecidas. Se intentó un rollback automático. Revisa $LOG_FILE para detalles."
+  ui_error "Instalaci?n aplicada pero no se detectan sesiones SSH establecidas. Se intent? un rollback autom?tico. Revisa $LOG_FILE para detalles."
 fi
 
