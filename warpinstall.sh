@@ -275,9 +275,9 @@ fi
 # --- Configurar modo DNS-only (DoH) y conectar ---
 prompt_enter "Se configurara warp-cli en modo DNS-only (DoH)."
 warp-cli disconnect >/dev/null 2>&1 || true
-if ! warp-cli mode doh >/dev/null 2>&1; then
+if ! set_mode_doh; then
   sleep 2
-  warp-cli mode doh >/dev/null 2>&1 || safe_exit_on_error "Error al establecer modo DoH."
+  set_mode_doh || safe_exit_on_error "Error al establecer modo DoH."
 fi
 
 # --- Proteger sesiones SSH existentes: crear rutas específicas hacia los peers SSH
@@ -321,7 +321,7 @@ if ! echo "$WARP_STATUS$WARP_SETTINGS" | grep -qi "mode.*doh"; then
   warp-cli disconnect >/dev/null 2>&1 || true
   cleanup_ssh_routes
   sleep 1
-  warp-cli mode doh >/dev/null 2>&1 || safe_exit_on_error "Error al establecer modo DoH (reintento)."
+  set_mode_doh || safe_exit_on_error "Error al establecer modo DoH (reintento)."
   sleep 1
   warp-cli connect >/dev/null 2>&1 || true
   sleep 1
@@ -386,3 +386,18 @@ else
   ui_error "Instalación aplicada pero no se detectan sesiones SSH establecidas. Se intentó un rollback automático. Revisa $LOG_FILE para detalles."
 fi
 
+set_mode_doh() {
+  local cmds=(
+    "warp-cli mode doh"
+    "warp-cli set-mode doh"
+    "warp-cli --accept-tos true mode doh"
+    "warp-cli --accept-tos true set-mode doh"
+  )
+  for cmd in "${cmds[@]}"; do
+    if eval "$cmd" >/dev/null 2>&1; then
+      echo "[info] Comando exitoso para modo DoH: $cmd" >>"$LOG_FILE"
+      return 0
+    fi
+  done
+  return 1
+}
