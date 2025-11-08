@@ -1,4 +1,4 @@
-# Instalación y uso — warpinstall.sh
+﻿# Instalación y uso — warpinstall.sh
 
 Este repositorio contiene el instalador automatizado de Cloudflare WARP en modo DNS-only (DoH) para sistemas Ubuntu (22.04 / 24.04). El script principal es `warpinstall.sh` y está diseñado para ser no interactivo, silencioso y seguro: solo mostrará mensajes cortos `SUCCESS:` o `ERROR:` al usuario. Todo el detalle y trazas se escriben en `/var/log/warpinstall.log`.
 
