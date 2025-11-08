@@ -344,7 +344,7 @@ WARP_SETTINGS=$(warp_cli settings 2>/dev/null || true)
 echo "$WARP_STATUS" >>"$LOG_FILE"
 echo "$WARP_SETTINGS" >>"$LOG_FILE"
 
-if ! echo "$WARP_STATUS$WARP_SETTINGS" | grep -qi "mode.*doh"; then
+if ! echo "$WARP_STATUS$WARP_SETTINGS" | grep -qiE "mode[^[:alnum:]]*(doh|dns[- ]?only|dnsoverhttps)"; then
   echo "[warn] No se confirmo modo DoH en el primer intento. Reintentando configuracion completa." >>"$LOG_FILE"
   warp_cli disconnect >/dev/null 2>&1 || true
   cleanup_ssh_routes
@@ -359,7 +359,7 @@ if ! echo "$WARP_STATUS$WARP_SETTINGS" | grep -qi "mode.*doh"; then
   echo "$WARP_SETTINGS" >>"$LOG_FILE"
 fi
 
-if ! echo "$WARP_STATUS$WARP_SETTINGS" | grep -qi "mode.*doh"; then
+if ! echo "$WARP_STATUS$WARP_SETTINGS" | grep -qiE "mode[^[:alnum:]]*(doh|dns[- ]?only|dnsoverhttps)"; then
   echo "[error] warp-cli no quedo en modo DoH tras los reintentos." >>"$LOG_FILE"
   warp_cli disconnect >/dev/null 2>&1 || true
   cleanup_ssh_routes
