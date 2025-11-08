@@ -42,6 +42,7 @@ ui_error() {
 }
 
 # --- Parámetros (no interactivo por defecto) ---
+CLEAN_REPO_PATH=""
 WARP_KEY=""
 NONINTERACTIVE=1
 SSH_PORT=22
@@ -85,6 +86,10 @@ while [[ "$#" -gt 0 ]]; do
       INSTALL_SERVICE=1
       shift
       ;;
+    --cleanup-repo)
+      CLEAN_REPO_PATH="$2"
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -126,6 +131,13 @@ if [ -z "$WARP_KEY" ] && [ "$DRY_RUN" -ne 1 ]; then
     else
       echo "[info] Clave WARP+ recibida (no se mostrara en pantalla)." >>"$LOG_FILE"
     fi
+  fi
+fi
+
+if [ -z "$CLEAN_REPO_PATH" ] && [ "$DRY_RUN" -ne 1 ]; then
+  if prompt_yes_no "Deseas eliminar un clon previo del repositorio antes de continuar?" ; then
+    echo -n "Ruta absoluta del clon a eliminar: " >&3
+    if [ -t 0 ]; then read -r CLEAN_REPO_PATH </dev/tty 2>/dev/null || read -r CLEAN_REPO_PATH; else read -r CLEAN_REPO_PATH; fi
   fi
 fi
 
@@ -186,8 +198,39 @@ prompt_enter "Se instalaran dependencias base y se configurara el repositorio de
 apt-get update -y || safe_exit_on_error "Error al actualizar repositorios."
 apt-get install -y curl gnupg lsb-release wget apt-transport-https ca-certificates iproute2 net-tools systemd || safe_exit_on_error "Error al instalar dependencias."
 
+# Limpiar clon previo si se solicito
+if [ -n "$CLEAN_REPO_PATH" ]; then
+  if [ -d "$CLEAN_REPO_PATH" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    TARGET_DIR=$(cd "$CLEAN_REPO_PATH" 2>/dev/null && pwd)
+    if [ -z "$TARGET_DIR" ]; then
+      echo "[warn] No se pudo resolver la ruta $CLEAN_REPO_PATH" >>"$LOG_FILE"
+    elif [ "$SCRIPT_DIR" = "$TARGET_DIR" ]; then
+      echo "[warn] Se omitio la eliminacion de $CLEAN_REPO_PATH porque coincide con el directorio actual." >>"$LOG_FILE"
+    else
+      prompt_enter "Se eliminara el clon previo localizado en $CLEAN_REPO_PATH."
+      rm -rf "$CLEAN_REPO_PATH" || echo "[warn] No se pudo eliminar $CLEAN_REPO_PATH" >>"$LOG_FILE"
+    fi
+  else
+    echo "[warn] Ruta a limpiar no encontrada: $CLEAN_REPO_PATH" >>"$LOG_FILE"
+  fi
+fi
+
 # --- Añadir repositorio y clave GPG ---
-curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg || safe_exit_on_error "Error al importar la clave GPG."
+KEYRING_PATH="/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg"
+TMP_KEY=$(mktemp)
+if ! curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | gpg --dearmor -o "$TMP_KEY"; then
+  rm -f "$TMP_KEY"
+  safe_exit_on_error "Error al descargar o convertir la clave GPG."
+fi
+if ! install -m 644 "$TMP_KEY" "$KEYRING_PATH" >/dev/null 2>&1; then
+  if ! cp "$TMP_KEY" "$KEYRING_PATH"; then
+    rm -f "$TMP_KEY"
+    safe_exit_on_error "No se pudo instalar la clave GPG."
+  fi
+  chmod 644 "$KEYRING_PATH" >/dev/null 2>&1 || true
+fi
+rm -f "$TMP_KEY"
 
 # Detectar codename de la distro y usarlo si está disponible, por seguridad.
 DIST_CODENAME=$(lsb_release -cs 2>/dev/null || echo "jammy")
@@ -317,7 +360,7 @@ if ss -tn state established | grep -q ":${SSH_PORT}"; then
       # shellcheck source=/dev/null
       . "$HELPER_PATH"
       if declare -F install_warp_service >/dev/null 2>&1; then
-        install_warp_service "$0" "$WARP_KEY" "$SSH_PORT" "$ENABLE_SERVICE"
+        install_warp_service "$0" "$WARP_KEY" "$SSH_PORT" "$ENABLE_SERVICE" ""
       else
         CMD=(bash "$HELPER_PATH" --source "$0" --ssh-port "$SSH_PORT")
         if [ -n "$WARP_KEY" ]; then
