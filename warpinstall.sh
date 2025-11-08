@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 # ===========================================================
 # Cloudflare WARP Secure Installer (warpinstall.sh)
 # -----------------------------------------------------------
@@ -154,6 +154,14 @@ cleanup_ssh_routes() {
   fi
 }
 
+warp_cli() {
+  if ! command -v warp-cli >/dev/null 2>&1; then
+    echo "[error] warp-cli no está instalado o no está en PATH" >>"$LOG_FILE"
+    return 1
+  fi
+  warp-cli --accept-tos "$@"
+}
+
 # --- Preparar rollback seguro para evitar perder SSH ---
 # Escribimos un script de rollback que se ejecutará en background via systemd-run o nohup.
 ROLLBACK_SCRIPT="/usr/local/bin/warp-rollback.sh"
@@ -267,14 +275,18 @@ systemctl is-active --quiet warp-svc || safe_exit_on_error "warp-svc no quedo ac
 
 # --- Registrar / aplicar licencia (si se provee) ---
 prompt_enter "Se registrara warp-cli y se aplicara la licencia si corresponde."
-warp-cli registration new >/dev/null 2>&1 || echo "[info] warp-cli registration new returned non-zero (posible ya registrado)" >>"$LOG_FILE"
+if ! warp_cli registration new >/dev/null 2>&1; then
+  echo "[info] registration new devolvio error; intentando delete + new" >>"$LOG_FILE"
+  warp_cli registration delete >/dev/null 2>&1 || true
+  warp_cli registration new >/dev/null 2>&1 || echo "[warn] No se pudo completar warp-cli registration new" >>"$LOG_FILE"
+fi
 if [ -n "$WARP_KEY" ]; then
-  warp-cli registration license "$WARP_KEY" >/dev/null 2>&1 || echo "[warn] No se pudo aplicar la clave WARP+" >>"$LOG_FILE"
+  warp_cli registration license "$WARP_KEY" >/dev/null 2>&1 || echo "[warn] No se pudo aplicar la clave WARP+" >>"$LOG_FILE"
 fi
 
 # --- Configurar modo DNS-only (DoH) y conectar ---
 prompt_enter "Se configurara warp-cli en modo DNS-only (DoH)."
-warp-cli disconnect >/dev/null 2>&1 || true
+warp_cli disconnect >/dev/null 2>&1 || true
 if ! set_mode_doh; then
   sleep 2
   set_mode_doh || safe_exit_on_error "Error al establecer modo DoH."
@@ -306,34 +318,34 @@ fi
 
 # Conectar
 prompt_enter "Se conectara WARP en modo DoH y se verificara el estado."
-if ! warp-cli connect >/dev/null 2>&1; then
+if ! warp_cli connect >/dev/null 2>&1; then
   sleep 2
-  warp-cli connect >/dev/null 2>&1 || echo "[warn] Segundo intento de connect fallo" >>"$LOG_FILE"
+  warp_cli connect >/dev/null 2>&1 || echo "[warn] Segundo intento de connect fallo" >>"$LOG_FILE"
 fi
 
-WARP_STATUS=$(warp-cli status 2>/dev/null || true)
-WARP_SETTINGS=$(warp-cli settings 2>/dev/null || true)
+WARP_STATUS=$(warp_cli status 2>/dev/null || true)
+WARP_SETTINGS=$(warp_cli settings 2>/dev/null || true)
 echo "$WARP_STATUS" >>"$LOG_FILE"
 echo "$WARP_SETTINGS" >>"$LOG_FILE"
 
 if ! echo "$WARP_STATUS$WARP_SETTINGS" | grep -qi "mode.*doh"; then
   echo "[warn] No se confirmo modo DoH en el primer intento. Reintentando configuracion completa." >>"$LOG_FILE"
-  warp-cli disconnect >/dev/null 2>&1 || true
+  warp_cli disconnect >/dev/null 2>&1 || true
   cleanup_ssh_routes
   sleep 1
   set_mode_doh || safe_exit_on_error "Error al establecer modo DoH (reintento)."
   sleep 1
-  warp-cli connect >/dev/null 2>&1 || true
+  warp_cli connect >/dev/null 2>&1 || true
   sleep 1
-  WARP_STATUS=$(warp-cli status 2>/dev/null || true)
-  WARP_SETTINGS=$(warp-cli settings 2>/dev/null || true)
+  WARP_STATUS=$(warp_cli status 2>/dev/null || true)
+  WARP_SETTINGS=$(warp_cli settings 2>/dev/null || true)
   echo "$WARP_STATUS" >>"$LOG_FILE"
   echo "$WARP_SETTINGS" >>"$LOG_FILE"
 fi
 
 if ! echo "$WARP_STATUS$WARP_SETTINGS" | grep -qi "mode.*doh"; then
   echo "[error] warp-cli no quedo en modo DoH tras los reintentos." >>"$LOG_FILE"
-  warp-cli disconnect >/dev/null 2>&1 || true
+  warp_cli disconnect >/dev/null 2>&1 || true
   cleanup_ssh_routes
   systemctl restart sshd >/dev/null 2>&1 || true
   safe_exit_on_error "WARP no quedo en modo DoH. Revisa $LOG_FILE"
@@ -390,8 +402,8 @@ set_mode_doh() {
   local cmds=(
     "warp-cli mode doh"
     "warp-cli set-mode doh"
-    "warp-cli --accept-tos true mode doh"
-    "warp-cli --accept-tos true set-mode doh"
+    "warp-cli mode doh"
+    "warp-cli set-mode doh"
   )
   for cmd in "${cmds[@]}"; do
     if eval "$cmd" >/dev/null 2>&1; then
