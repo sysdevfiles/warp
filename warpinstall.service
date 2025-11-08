@@ -1,0 +1,15 @@
+[Unit]
+Description=Cloudflare WARP Installer (one-shot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Ejecuta el instalador desde /usr/local/bin; puedes editar la unidad para añadir --warp-key o --ssh-port si lo deseas
+ExecStart=/usr/local/bin/warpinstall.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
