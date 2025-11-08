@@ -162,6 +162,22 @@ warp_cli() {
   warp-cli --accept-tos "$@"
 }
 
+set_mode_doh() {
+  local cmds=(
+    "warp_cli mode doh"
+    "warp_cli set-mode doh"
+    "warp-cli mode doh"
+    "warp-cli set-mode doh"
+  )
+  for cmd in "${cmds[@]}"; do
+    if eval "$cmd" >/dev/null 2>&1; then
+      echo "[info] Comando exitoso para modo DoH: $cmd" >>"$LOG_FILE"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # --- Preparar rollback seguro para evitar perder SSH ---
 # Escribimos un script de rollback que se ejecutará en background via systemd-run o nohup.
 ROLLBACK_SCRIPT="/usr/local/bin/warp-rollback.sh"
@@ -398,18 +414,3 @@ else
   ui_error "Instalación aplicada pero no se detectan sesiones SSH establecidas. Se intentó un rollback automático. Revisa $LOG_FILE para detalles."
 fi
 
-set_mode_doh() {
-  local cmds=(
-    "warp-cli mode doh"
-    "warp-cli set-mode doh"
-    "warp-cli mode doh"
-    "warp-cli set-mode doh"
-  )
-  for cmd in "${cmds[@]}"; do
-    if eval "$cmd" >/dev/null 2>&1; then
-      echo "[info] Comando exitoso para modo DoH: $cmd" >>"$LOG_FILE"
-      return 0
-    fi
-  done
-  return 1
-}
